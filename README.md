@@ -1,2 +1,2 @@
 # pycoin
-A simple bitcoin library
+A simple bitcoin library implementing using this book: https://programmingbitcoin.com/
