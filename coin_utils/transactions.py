@@ -1,5 +1,5 @@
 from coin_utils.utils import hash256
-from coin_utils.varint import decode_varint
+from coin_utils.varint import decode_varint, encode_varint
 
 class Tx:
 
@@ -31,6 +31,17 @@ class Tx:
     def hash(self):
         hash256(self.serialize())[::-1]
 
+    def serialize(self):
+        result  = self.version.to_bytes(4, 'little')
+        result += encode_varint(len(self.ins))
+        for tx in self.ins:
+            result += tx.serialize()
+        result += encode_varint(len(self.outs))
+        for tx in self.outs:
+            result += tx.serialize()
+        result += self.locktime.to_bytes(4, 'little')
+        return result 
+
     @classmethod
     def parse(cls, stream, testnet=False):
         version = int.from_bytes(stream.read(4), 'little')
@@ -42,7 +53,7 @@ class Tx:
         outputs = []
         for _ in range(n_outputs):
             outputs.append(TxOut.parse(stream))
-        locktime = int.from_bytes(s.read(4), 'little')
+        locktime = int.from_bytes(stream.read(4), 'little')
         return cls(version, inputs, outputs, locktime, testnet=testnet)
 
 
@@ -55,6 +66,7 @@ class TxIn:
             self.script = Script()
         else:
             self.script = script
+        self.sequence = sequence
 
     @classmethod
     def parse(cls, s):
@@ -70,6 +82,13 @@ class TxIn:
             self.prev_idx
         )
 
+    def serialize(self):
+        result  = self.prev_tx[::-1]
+        result += self.prev_idx.to_bytes(4, 'little')
+        result += self.script.serialize()
+        result += self.sequence.to_bytes(4, 'little')
+        return result
+
 
 class TxOut:
 
@@ -79,6 +98,11 @@ class TxOut:
 
     def __repr__(self):
         return '{}:{}'.format(self.amount, self.script_pubkey)
+
+    def serialize(self):
+        result  = self.amount.to_bytes(8, 'little')
+        result += self.script_pubkey.serialize()
+        return result 
 
     @classmethod
     def parse(cls, s):
