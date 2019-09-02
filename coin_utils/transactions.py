@@ -1,5 +1,43 @@
-from coin_utils.utils import hash256
+import requests
+
+from io import BytesIO
+
+from coin_utils.utils  import hash256
 from coin_utils.varint import decode_varint, encode_varint
+from coin_utils.script import Script
+
+
+class TxFetcher:
+    cache = {}
+
+    @classmethod
+    def get_url(cls, testnet=False):
+        if testnet:
+            return 'http://testnet.programmingbitcoin.com'
+        else:
+            return 'http://mainnet.programmingbitcoin.com'
+
+    @classmethod
+    def fetch(cls, tx_id, testnet=False, fresh=False):
+        if fresh or (tx_id not in cls.cache):
+            url = '{}/tx/{}.hex'.format(cls.get_url(testnet), tx_id)
+            response = requests.get(url)
+            try:
+                raw = bytes.fromhex(response.text.strip())
+            except ValueError:
+                raise ValueError('unexpected response: {}'.format(response.text))
+            if raw[4] == 0:
+                raw = raw[:4] + raw[6:]
+                tx = Tx.parse(BytesIO(raw), testnet = testnet)
+                tx.locktime = int.from_bytes(raw[-4:], 'little')
+            else:
+                tx = Tx.parse(BytesIO(raw), testnet = testnet)
+            if tx.id() != tx_id:
+                raise ValueError('not the same id: {} vs {}'.format(tx.id(), tx_id))
+            cls.cache[tx_id] = tx
+        cls.cache[tx_id].testnet = testnet
+        return cls.cache[tx_id]
+
 
 class Tx:
 
@@ -25,6 +63,11 @@ class Tx:
             self.locktime
         )
     
+    def fee(self, testnet=False):        
+        amount_in  = sum([i.amount(testnet) for i in self.ins])
+        amount_out = sum([o.amount for o in self.outs]) 
+        return amount_in - amount_out
+
     def id(self):
         self.hash().hex()
 
@@ -59,13 +102,13 @@ class Tx:
 
 class TxIn:        
 
-    def __init__(self, prev_tx, prev_idx, script=None, sequence=0xffffffff):
+    def __init__(self, prev_tx, prev_idx, script_sig=None, sequence=0xffffffff):
         self.prev_tx  = prev_tx
         self.prev_idx = prev_idx
-        if script is None:
+        if script_sig is None:
             self.script = Script()
         else:
-            self.script = script
+            self.script = script_sig
         self.sequence = sequence
 
     @classmethod
@@ -88,6 +131,17 @@ class TxIn:
         result += self.script.serialize()
         result += self.sequence.to_bytes(4, 'little')
         return result
+
+    def fetch_tx(self, testnet=False):
+        return TxFetcher.fetch(self.prev_tx.hex(), testnet=testnet)
+
+    def amount(self, testnet=False):
+        tx = self.fetch_tx(testnet=testnet)
+        return tx.tx_outs[self.prev_idx].amount
+
+    def script_pubkey(self, testnet=False):
+        tx = self.fetch_tx(testnet=testnet)
+        return tx.tx_outs[self.prev_idx].script_pubkey
 
 
 class TxOut:
